@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}배틀 아레나 - {{ block.super }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2 class="text-3xl font-black mb-6 text-center">배틀 아레나</h2>
+    <p class="text-center text-gray-500 mb-8">덱을 구성한 트레이너들과 배틀하여 실력을 시험해보세요!</p>
+    
+    <div id="user-list" class="space-y-4">
+        {% for opponent in opponents %}
+        <div class="card flex items-center justify-between hover:shadow-xl transition-shadow duration-300 !p-4">
+            <div class="flex items-center space-x-4">
+                <img src="{{ opponent.profile_image.url }}" alt="{{ opponent.username }}'s profile" class="w-16 h-16 rounded-full border-2 border-gray-200 object-cover">
+                <div>
+                    <h3 class="text-xl font-bold">{{ opponent.username }}</h3>
+                    <p class="text-gray-500 italic mt-1">"{{ opponent.status_message|default:'상태 메시지가 없습니다.' }}"</p>
+                    <p class="text-sm font-semibold text-gray-600 mt-1">전적: {{ opponent.losses|intcomma }}승 {{ opponent.wins|intcomma }}패</p>
+                </div>
+            </div>
+            <!-- 버튼 클릭 시 JavaScript 함수 showBattleModal을 호출하며 상대방의 고유 ID를 넘겨줍니다. -->
+            <button onclick='showBattleModal({{ opponent.id }})'
+                    class="bg-red-500 text-white font-bold py-3 px-6 rounded-full hover:bg-red-600 transition transform hover:scale-105">
+                <i class="fa-solid fa-khanda mr-2"></i>배틀하기
+            </button>
+        </div>
+        {% empty %}
+        <p class="text-center text-gray-500 py-8">배틀할 수 있는 상대가 아직 없습니다.</p>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- ===== 배틀 모달 ===== -->
+<div id="battle-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+    <div id="modal-content" class="card w-full max-w-4xl max-h-[90vh] flex flex-col text-center transition-transform duration-300 transform scale-95 opacity-0 relative">
+        <!-- 배틀 미리보기 UI (초기 상태) -->
+        <div id="battle-preview">
+             <div class="animate-pulse text-center p-8">
+                <p class="text-xl font-semibold text-gray-600">상대방의 정보를 불러오는 중...</p>
+            </div>
+        </div>
+
+        <!-- 배틀 결과 UI (결과 수신 후 표시) -->
+        <div id="battle-result" class="hidden">
+            <div id="result-title" class="text-8xl font-black mb-4"></div>
+            <p class="text-xl text-gray-600 mb-6" id="result-summary"></p>
+            <button onclick="closeBattleModal()" class="mt-4 w-1/2 mx-auto py-3 bg-gray-600 text-white font-bold rounded-lg hover:bg-gray-700">확인</button>
+        </div>
+        
+        <button onclick="closeBattleModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-800 text-2xl">&times;</button>
+    </div>
+</div>
+{% endblock %}
+
+
+{% block extra_script %}
+<script>
+    const battleModal = document.getElementById('battle-modal');
+    const modalContent = document.getElementById('modal-content');
+    const battlePreview = document.getElementById('battle-preview');
+    const battleResult = document.getElementById('battle-result');
+
+    // Django 뷰에서 전달된 JSON 데이터를 JavaScript 변수로 안전하게 변환
+    const opponentsData = JSON.parse('{{ opponents_json|escapejs }}');
+    const currentUserDeck = JSON.parse('{{ user_deck_json|escapejs }}');
+    const currentUsername = "{{ user.username }}";
+
+    // 포켓몬 덱을 HTML로 렌더링하는 함수
+    function renderDeck(deck) {
+        if (!deck || deck.length === 0) {
+            return '<p class="text-sm text-gray-500 col-span-3">덱 정보가 없습니다.</p>';
+        }
+        return deck.map(pokemon => `
+            <div class="p-1 bg-white rounded shadow-sm">
+                <img src="${pokemon.sprite_url}" class="mx-auto" alt="${pokemon.name}">
+                <p class="text-xs capitalize font-semibold">${pokemon.name}</p>
+            </div>
+        `).join('');
+    }
+
+    // '배틀하기' 버튼 클릭 시 모달을 표시하는 함수
+    function showBattleModal(opponentId) {
+        const opponent = opponentsData.find(o => o.id === opponentId);
+        if (!opponent) {
+            alert('상대방 정보를 찾을 수 없습니다.');
+            return;
+        }
+
+        // 모달창을 열고 애니메이션 효과 적용
+        battleModal.classList.remove('hidden');
+        setTimeout(() => {
+            modalContent.classList.remove('scale-95', 'opacity-0');
+        }, 10);
+        
+        // 미리보기 UI를 동적으로 생성
+        battlePreview.innerHTML = `
+            <h2 class="text-3xl font-black text-center mb-4 tracking-wider">상대 정보</h2>
+            <div class="grid grid-cols-2 gap-6 items-start">
+                <div>
+                    <h3 class="text-xl font-bold mb-2">${currentUsername}</h3>
+                    <div class="grid grid-cols-3 gap-2 bg-blue-50 p-2 rounded-lg">${renderDeck(currentUserDeck)}</div>
+                </div>
+                <div>
+                    <h3 class="text-xl font-bold mb-2">${opponent.username}</h3>
+                    <div class="grid grid-cols-3 gap-2 bg-red-50 p-2 rounded-lg">${renderDeck(opponent.deck)}</div>
+                </div>
+            </div>
+            <button onclick="startBattle(${opponentId})" class="mt-6 w-1/2 mx-auto py-3 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 text-2xl">배틀 시작!</button>
+        `;
+    }
+
+    // '배틀 시작!' 버튼 클릭 시 서버에 결과를 요청하는 함수
+    async function startBattle(opponentId) {
+        try {
+            // CSRF 토큰을 가져와 fetch 요청 헤더에 포함
+            const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+            const response = await fetch(`/battle/start/${opponentId}/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrftoken },
+            });
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                const resultTitle = document.getElementById('result-title');
+                if (data.result.is_victory) {
+                    resultTitle.textContent = 'VICTORY';
+                    resultTitle.className = 'text-8xl font-black mb-4 text-blue-500';
+                } else {
+                    resultTitle.textContent = 'DEFEAT';
+                    resultTitle.className = 'text-8xl font-black mb-4 text-red-500';
+                }
+                
+                document.getElementById('result-summary').textContent = 
+                    `결과: ${data.my_username} [${data.result.my_remaining} 남음] vs ${data.opponent_username} [${data.result.opponent_remaining} 남음]`;
+
+                // 미리보기 UI를 숨기고 결과 UI를 표시
+                battlePreview.classList.add('hidden');
+                battleResult.classList.remove('hidden');
+            } else {
+                alert('오류: ' + data.message);
+                closeBattleModal();
+            }
+        } catch (error) {
+            console.error('Battle request failed:', error);
+            alert('배틀 결과를 가져오는 데 실패했습니다.');
+            closeBattleModal();
+        }
+    }
+
+    // 모달창 닫기 함수
+    function closeBattleModal() {
+        modalContent.classList.add('scale-95', 'opacity-0');
+        setTimeout(() => {
+            battleModal.classList.add('hidden');
+            // 다음 배틀을 위해 모달 내용을 초기 상태로 복원
+            battlePreview.classList.remove('hidden');
+            battlePreview.innerHTML = `<div class="animate-pulse text-center p-8"><p class="text-xl font-semibold text-gray-600">상대방의 정보를 불러오는 중...</p></div>`;
+            battleResult.classList.add('hidden');
+        }, 300);
+    }
+</script>
+<!-- CSRF 토큰을 JavaScript에서 사용하기 위한 숨겨진 form -->
+<form class="hidden"><input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}"></form>
+{% endblock %}
+
