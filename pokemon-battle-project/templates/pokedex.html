@@ -5,14 +5,21 @@
 
 {% block content %}
 <div class="card">
-    <h2 class="text-3xl font-black mb-2 text-center">1세대 포켓몬 도감</h2>
-    <p class="text-center text-gray-500 mb-6">포켓몬을 클릭하여 덱에 추가하거나 제거하세요. (최대 6마리)</p>
+    <div class="flex justify-center items-center mb-6 relative">
+        <h2 class="text-3xl font-black text-center">1세대 포켓몬 도감</h2>
+        <button id="random-select-btn" class="absolute right-0 py-2 px-4 bg-yellow-400 text-yellow-900 font-bold rounded-full shadow-md hover:bg-yellow-500 transition transform hover:scale-105">
+            <i class="fa-solid fa-dice mr-2"></i>랜덤 선택
+        </button>
+    </div>
+    <p class="text-center text-gray-500 mb-6">포켓몬을 클릭하여 덱에 추가하거나 제거하세요. 선택한 순서대로 덱이 저장됩니다. (최대 6마리)</p>
     
     <div id="pokedex-grid" class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 gap-4">
         {% for pokemon in pokemons %}
-        <div class="pokedex-card text-center p-2 rounded-lg cursor-pointer transform transition hover:scale-105 bg-gray-50 {% if pokemon.id in user_deck_ids %}selected{% endif %}"
+        <div class="pokedex-card relative text-center p-2 rounded-lg cursor-pointer transform transition hover:scale-105 bg-gray-50"
              data-pokemon-id="{{ pokemon.id }}">
-            <img src="{{ pokemon.sprite_url }}" alt="{{ pokemon.name }}" class="mx-auto h-20 w-20">
+            <span class="selection-order hidden absolute top-1 left-1 bg-blue-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold"></span>
+            <span class="absolute top-1 right-2 text-xs font-bold text-gray-400">#{{ pokemon.pokemon_id|stringformat:"03d" }}</span>
+            <img src="{{ pokemon.sprite_url }}" alt="{{ pokemon.name }}" class="mx-auto h-20 w-20 mt-2">
             <p class="text-sm font-bold capitalize">{{ pokemon.name }}</p>
         </div>
         {% endfor %}
@@ -40,31 +47,59 @@
     const pokedexGrid = document.getElementById('pokedex-grid');
     const saveDeckBtn = document.getElementById('save-deck-btn');
     const deckCountSpan = document.getElementById('deck-count');
+    const randomSelectBtn = document.getElementById('random-select-btn');
     
-    // 현재 덱에 포함된 포켓몬 ID를 Set으로 관리 (탐색 속도 향상)
-    let selectedPokemonIds = new Set({{ user_deck_ids|safe }});
+    let selectedPokemonIds = JSON.parse('{{ user_deck_ids|escapejs }}');
+    
+    function updateSelectionUI() {
+        const allCards = document.querySelectorAll('.pokedex-card');
+        allCards.forEach(card => {
+            const pokemonId = parseInt(card.dataset.pokemonId);
+            const orderSpan = card.querySelector('.selection-order');
+            const orderIndex = selectedPokemonIds.indexOf(pokemonId);
+
+            if (orderIndex !== -1) {
+                card.classList.add('selected');
+                orderSpan.textContent = orderIndex + 1;
+                orderSpan.classList.remove('hidden');
+            } else {
+                card.classList.remove('selected');
+                orderSpan.classList.add('hidden');
+            }
+        });
+        deckCountSpan.textContent = selectedPokemonIds.length;
+    }
 
     pokedexGrid.addEventListener('click', (event) => {
         const card = event.target.closest('.pokedex-card');
         if (!card) return;
 
         const pokemonId = parseInt(card.dataset.pokemonId);
+        const index = selectedPokemonIds.indexOf(pokemonId);
         
-        if (selectedPokemonIds.has(pokemonId)) {
-            // 선택 해제
-            selectedPokemonIds.delete(pokemonId);
-            card.classList.remove('selected');
+        if (index > -1) {
+            selectedPokemonIds.splice(index, 1);
         } else {
-            // 선택 추가 (최대 6마리)
-            if (selectedPokemonIds.size >= 6) {
+            if (selectedPokemonIds.length >= 6) {
                 alert('덱은 최대 6마리까지 구성할 수 있습니다.');
                 return;
             }
-            selectedPokemonIds.add(pokemonId);
-            card.classList.add('selected');
+            selectedPokemonIds.push(pokemonId);
         }
-        // UI 업데이트
-        deckCountSpan.textContent = selectedPokemonIds.size;
+        updateSelectionUI();
+    });
+
+    randomSelectBtn.addEventListener('click', () => {
+        selectedPokemonIds = [];
+        const allCards = Array.from(document.querySelectorAll('.pokedex-card'));
+        let shuffled = allCards.sort(() => 0.5 - Math.random());
+        let selected = shuffled.slice(0, 6);
+        
+        selected.forEach(card => {
+            const pokemonId = parseInt(card.dataset.pokemonId);
+            selectedPokemonIds.push(pokemonId);
+        });
+        updateSelectionUI();
     });
 
     saveDeckBtn.addEventListener('click', async () => {
@@ -77,13 +112,13 @@
                     'Content-Type': 'application/json',
                     'X-CSRFToken': csrftoken,
                 },
-                body: JSON.stringify({ pokemon_ids: Array.from(selectedPokemonIds) }),
+                body: JSON.stringify({ pokemon_ids: selectedPokemonIds }),
             });
 
             const data = await response.json();
             if (data.status === 'success') {
                 alert(data.message);
-                window.location.href = "{% url 'my_info' %}"; // 저장 후 내 정보 페이지로 이동
+                window.location.href = "{% url 'my_info' %}";
             } else {
                 alert('오류: ' + data.message);
             }
@@ -92,8 +127,8 @@
             alert('덱 저장 중 오류가 발생했습니다.');
         }
     });
+    
+    document.addEventListener('DOMContentLoaded', updateSelectionUI);
 </script>
-<!-- CSRF 토큰을 JavaScript에서 사용할 수 있도록 숨겨진 input 추가 -->
 <form><input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}"></form>
 {% endblock %}
-

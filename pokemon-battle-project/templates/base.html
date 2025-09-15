@@ -11,6 +11,29 @@
         body { font-family: 'Noto Sans KR', sans-serif; }
         .card { background-color: white; border-radius: 1rem; padding: 1.5rem; box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
         .nav-link.active { background-color: #EF4444; color: white; box-shadow: 0 4px 10px rgba(239, 68, 68, 0.4); }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+            20%, 40%, 60%, 80% { transform: translateX(5px); }
+        }
+        .animate-shake {
+            animation: shake 0.5s ease-in-out;
+        }
+
+        @keyframes flash {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.2; }
+        }
+        .animate-flash {
+            animation: flash 0.3s ease-in-out;
+        }
+        
+        .faint {
+            transition: transform 0.5s ease-in, opacity 0.5s ease-in;
+            transform: translateY(20px) rotate(-90deg);
+            opacity: 0;
+        }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
@@ -39,7 +62,6 @@
 
         <main>
             {% block content %}
-            <!-- 각 페이지의 내용이 이 블록을 채우게 됩니다. -->
             {% endblock %}
         </main>
     </div>

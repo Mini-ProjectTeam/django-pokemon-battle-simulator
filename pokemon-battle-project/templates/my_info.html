@@ -1,32 +1,27 @@
 {% extends "base.html" %}
-{% load mathfilters %}
 
 {% block title %}내 정보 - {{ block.super }}{% endblock %}
 
 {% block content %}
 <div class="grid md:grid-cols-5 gap-6">
-    <!-- 왼쪽: 덱 구성 -->
     <div class="md:col-span-3 card">
         <h2 class="text-2xl font-black mb-4">나의 포켓몬 덱</h2>
         <div id="my-deck-grid" class="grid grid-cols-3 gap-4">
-            {% for pokemon in user.deck.pokemons.all %}
+            {% for pokemon in ordered_pokemons %}
             <div class="aspect-square rounded-lg relative overflow-hidden bg-gray-100 border">
                 <img src="{{ pokemon.artwork_url }}" alt="{{ pokemon.name }}" class="w-full h-full object-contain p-2">
                 <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-center text-xs font-bold py-1 capitalize">{{ pokemon.name }}</div>
             </div>
             {% endfor %}
             
-            {% with remaining_slots=6|sub:user.deck.pokemons.count %}
-            {% for i in ''|center:remaining_slots %}
+            {% for i in remaining_slots_range %}
             <a href="{% url 'pokedex' %}" class="aspect-square rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 flex items-center justify-center hover:border-red-400 hover:bg-red-50 transition">
                 <span class="text-5xl text-gray-300 font-light">+</span>
             </a>
             {% endfor %}
-            {% endwith %}
-        </div>
+            </div>
     </div>
 
-    <!-- 오른쪽: 프로필 및 상태 메시지 -->
     <div class="md:col-span-2 space-y-6">
         <div class="card">
             <h2 class="text-2xl font-black mb-4">내 프로필</h2>
@@ -46,4 +41,3 @@
     </div>
 </div>
 {% endblock %}
-

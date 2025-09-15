@@ -3,6 +3,17 @@
 
 {% block title %}배틀 아레나 - {{ block.super }}{% endblock %}
 
+{% block extra_head %}
+<style>
+    #battle-canvas {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 16 / 9;
+        border-radius: 0.5rem;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="card">
     <h2 class="text-3xl font-black mb-6 text-center">배틀 아레나</h2>
@@ -16,10 +27,9 @@
                 <div>
                     <h3 class="text-xl font-bold">{{ opponent.username }}</h3>
                     <p class="text-gray-500 italic mt-1">"{{ opponent.status_message|default:'상태 메시지가 없습니다.' }}"</p>
-                    <p class="text-sm font-semibold text-gray-600 mt-1">전적: {{ opponent.losses|intcomma }}승 {{ opponent.wins|intcomma }}패</p>
+                    <p class="text-sm font-semibold text-gray-600 mt-1">전적: {{ opponent.wins|intcomma }}승 {{ opponent.losses|intcomma }}패</p>
                 </div>
             </div>
-            <!-- 버튼 클릭 시 JavaScript 함수 showBattleModal을 호출하며 상대방의 고유 ID를 넘겨줍니다. -->
             <button onclick='showBattleModal({{ opponent.id }})'
                     class="bg-red-500 text-white font-bold py-3 px-6 rounded-full hover:bg-red-600 transition transform hover:scale-105">
                 <i class="fa-solid fa-khanda mr-2"></i>배틀하기
@@ -31,17 +41,23 @@
     </div>
 </div>
 
-<!-- ===== 배틀 모달 ===== -->
 <div id="battle-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
     <div id="modal-content" class="card w-full max-w-4xl max-h-[90vh] flex flex-col text-center transition-transform duration-300 transform scale-95 opacity-0 relative">
-        <!-- 배틀 미리보기 UI (초기 상태) -->
         <div id="battle-preview">
              <div class="animate-pulse text-center p-8">
                 <p class="text-xl font-semibold text-gray-600">상대방의 정보를 불러오는 중...</p>
             </div>
         </div>
 
-        <!-- 배틀 결과 UI (결과 수신 후 표시) -->
+        <div id="battle-animation" class="hidden">
+            <div class="relative">
+                <canvas id="battle-canvas" width="800" height="450"></canvas>
+                <div id="battle-log-canvas" class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white p-3 rounded-b-lg text-lg font-bold transition-opacity duration-300">
+                    배틀 시작!
+                </div>
+            </div>
+        </div>
+
         <div id="battle-result" class="hidden">
             <div id="result-title" class="text-8xl font-black mb-4"></div>
             <p class="text-xl text-gray-600 mb-6" id="result-summary"></p>
@@ -59,61 +75,208 @@
     const battleModal = document.getElementById('battle-modal');
     const modalContent = document.getElementById('modal-content');
     const battlePreview = document.getElementById('battle-preview');
+    const battleAnimation = document.getElementById('battle-animation');
     const battleResult = document.getElementById('battle-result');
+    const battleLogCanvas = document.getElementById('battle-log-canvas');
+    const battleCanvas = document.getElementById('battle-canvas');
+    const ctx = battleCanvas.getContext('2d');
+    const CANVAS_WIDTH = battleCanvas.width;
+    const CANVAS_HEIGHT = battleCanvas.height;
 
-    // Django 뷰에서 전달된 JSON 데이터를 JavaScript 변수로 안전하게 변환
     const opponentsData = JSON.parse('{{ opponents_json|escapejs }}');
     const currentUserDeck = JSON.parse('{{ user_deck_json|escapejs }}');
     const currentUsername = "{{ user.username }}";
 
-    // 포켓몬 덱을 HTML로 렌더링하는 함수
-    function renderDeck(deck) {
-        if (!deck || deck.length === 0) {
-            return '<p class="text-sm text-gray-500 col-span-3">덱 정보가 없습니다.</p>';
-        }
-        return deck.map(pokemon => `
-            <div class="p-1 bg-white rounded shadow-sm">
-                <img src="${pokemon.sprite_url}" class="mx-auto" alt="${pokemon.name}">
-                <p class="text-xs capitalize font-semibold">${pokemon.name}</p>
-            </div>
-        `).join('');
+    let playerTeamState = [];
+    let opponentTeamState = [];
+    let activePlayerPokemon = null;
+    let activeOpponentPokemon = null;
+    let battleAssets = {};
+    let animationFrameId;
+    let particles = [];
+
+    const typeChart = {
+        normal: { rock: 0.5, ghost: 0, steel: 0.5 },
+        fire: { fire: 0.5, water: 0.5, grass: 2, ice: 2, bug: 2, rock: 0.5, dragon: 0.5, steel: 2 },
+        water: { fire: 2, water: 0.5, grass: 0.5, ground: 2, rock: 2, dragon: 0.5 },
+        electric: { water: 2, electric: 0.5, grass: 0.5, ground: 0, flying: 2, dragon: 0.5 },
+        grass: { fire: 0.5, water: 2, grass: 0.5, poison: 0.5, ground: 2, flying: 0.5, bug: 0.5, rock: 2, dragon: 0.5, steel: 0.5 },
+        ice: { fire: 0.5, water: 0.5, grass: 2, ice: 0.5, ground: 2, flying: 2, dragon: 2, steel: 0.5 },
+        fighting: { normal: 2, ice: 2, poison: 0.5, flying: 0.5, psychic: 0.5, bug: 0.5, rock: 2, ghost: 0, dark: 2, steel: 2, fairy: 0.5 },
+        poison: { grass: 2, poison: 0.5, ground: 0.5, rock: 0.5, ghost: 0.5, steel: 0, fairy: 2 },
+        ground: { fire: 2, electric: 2, grass: 0.5, poison: 2, flying: 0, bug: 0.5, rock: 2, steel: 2 },
+        flying: { electric: 0.5, grass: 2, fighting: 2, bug: 2, rock: 0.5, steel: 0.5 },
+        psychic: { fighting: 2, poison: 2, psychic: 0.5, dark: 0, steel: 0.5 },
+        bug: { fire: 0.5, grass: 2, fighting: 0.5, poison: 0.5, flying: 0.5, psychic: 2, ghost: 0.5, dark: 2, steel: 0.5, fairy: 0.5 },
+        rock: { fire: 2, ice: 2, fighting: 0.5, ground: 0.5, flying: 2, bug: 2, steel: 0.5 },
+        ghost: { normal: 0, psychic: 2, ghost: 2, dark: 0.5 },
+        dragon: { dragon: 2, steel: 0.5, fairy: 0 },
+        dark: { fighting: 0.5, psychic: 2, ghost: 2, dark: 0.5, fairy: 0.5 },
+        steel: { fire: 0.5, water: 0.5, electric: 0.5, ice: 2, rock: 2, steel: 0.5, fairy: 2 },
+        fairy: { fighting: 2, poison: 0.5, dragon: 2, dark: 2, steel: 0.5 }
+    };
+
+    function getTypeEffectiveness(attackType, defenderTypes) {
+        let multiplier = 1;
+        if (!attackType) return multiplier;
+        const attackChart = typeChart[attackType];
+        if (!attackChart) return multiplier;
+        defenderTypes.forEach(type => {
+            if (type && attackChart[type] !== undefined) {
+                multiplier *= attackChart[type];
+            }
+        });
+        return multiplier;
     }
 
-    // '배틀하기' 버튼 클릭 시 모달을 표시하는 함수
+    function preloadImages(sources) {
+        const promises = Object.entries(sources).map(([key, src]) => {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve({ key, img });
+                img.onerror = () => {
+                    const frontImg = new Image();
+                    frontImg.onload = () => resolve({ key, img: frontImg });
+                    frontImg.onerror = reject;
+                    frontImg.src = src.replace('/back/', '/');
+                };
+                img.src = src;
+            });
+        });
+        return Promise.all(promises).then(results => 
+            results.reduce((acc, { key, img }) => ({ ...acc, [key]: img }), {})
+        );
+    }
+
+    function drawScene() {
+        ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        const gradient = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
+        gradient.addColorStop(0, '#60A5FA');
+        gradient.addColorStop(0.5, '#3B82F6');
+        gradient.addColorStop(1, '#1E3A8A');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        const groundGradient = ctx.createLinearGradient(0, CANVAS_HEIGHT * 0.7, 0, CANVAS_HEIGHT);
+        groundGradient.addColorStop(0, '#FBBF24');
+        groundGradient.addColorStop(1, '#D97706');
+        ctx.fillStyle = groundGradient;
+        ctx.fillRect(0, CANVAS_HEIGHT * 0.7, CANVAS_WIDTH, CANVAS_HEIGHT * 0.3);
+        if (activePlayerPokemon) drawPokemon(activePlayerPokemon);
+        if (activeOpponentPokemon) drawPokemon(activeOpponentPokemon);
+        particles.forEach((p, i) => {
+            p.update();
+            p.draw();
+            if (p.life <= 0) particles.splice(i, 1);
+        });
+        drawUI();
+    }
+    
+    function drawPokemon(pokemon) {
+        if (!pokemon.img) return;
+        ctx.save();
+        ctx.filter = pokemon.isFainted ? 'grayscale(100%) brightness(50%)' : 'none';
+        ctx.globalAlpha = pokemon.alpha;
+        const w = pokemon.img.width * 2.5;
+        const h = pokemon.img.height * 2.5;
+        ctx.drawImage(pokemon.img, pokemon.x - w / 2, pokemon.y - h / 2, w, h);
+        ctx.restore();
+    }
+
+    function drawHealthBar(pokemon, x, y, name) {
+        const barWidth = 200;
+        const barHeight = 15;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.beginPath();
+        ctx.roundRect(x - 10, y - 35, barWidth + 20, 65, 8);
+        ctx.fill();
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 20px "Noto Sans KR"';
+        ctx.textAlign = pokemon.isPlayer ? 'right' : 'left';
+        ctx.fillText(name, x + (pokemon.isPlayer ? barWidth : 0), y - 10);
+        ctx.fillStyle = '#333';
+        ctx.fillRect(x, y, barWidth, barHeight);
+        const hpPercentage = pokemon.currentHp / pokemon.maxHp;
+        const hpColor = hpPercentage > 0.5 ? '#22C55E' : hpPercentage > 0.2 ? '#F59E0B' : '#EF4444';
+        ctx.fillStyle = hpColor;
+        ctx.fillRect(x, y, barWidth * hpPercentage, barHeight);
+        ctx.strokeStyle = 'white';
+        ctx.strokeRect(x, y, barWidth, barHeight);
+    }
+    
+    function drawUI() {
+        if (activePlayerPokemon) drawHealthBar(activePlayerPokemon, CANVAS_WIDTH - 250, CANVAS_HEIGHT - 80, activePlayerPokemon.name);
+        if (activeOpponentPokemon) drawHealthBar(activeOpponentPokemon, 50, 50, activeOpponentPokemon.name);
+        for (let i = 0; i < playerTeamState.length; i++) {
+             drawPokeballIcon(true, i, !playerTeamState[i].isFainted);
+        }
+        for (let i = 0; i < opponentTeamState.length; i++) {
+             drawPokeballIcon(false, i, !opponentTeamState[i].isFainted);
+        }
+    }
+
+    function drawPokeballIcon(isPlayer, index, isAlive) {
+        const radius = 10;
+        const spacing = 25;
+        const x = isPlayer ? CANVAS_WIDTH - 240 + (index * spacing) : 60 + (index * spacing);
+        const y = isPlayer ? CANVAS_HEIGHT - 35 : 95;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = isAlive ? '#EF4444' : '#6B7280';
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+
+    function gameLoop() {
+        drawScene();
+        animationFrameId = requestAnimationFrame(gameLoop);
+    }
+
+    const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+    function renderDeck(deck) {
+        if (!deck || deck.length === 0) return '<p class="text-sm text-gray-500 col-span-3">덱 정보가 없습니다.</p>';
+        return deck.map(p => `<div class="p-1 bg-white rounded shadow-sm"><img src="${p.sprite_url}" class="mx-auto" alt="${p.name}"><p class="text-xs capitalize font-semibold">${p.name}</p></div>`).join('');
+    }
+
     function showBattleModal(opponentId) {
         const opponent = opponentsData.find(o => o.id === opponentId);
-        if (!opponent) {
-            alert('상대방 정보를 찾을 수 없습니다.');
-            return;
-        }
-
-        // 모달창을 열고 애니메이션 효과 적용
+        if (!opponent) return alert('상대방 정보를 찾을 수 없습니다.');
         battleModal.classList.remove('hidden');
-        setTimeout(() => {
-            modalContent.classList.remove('scale-95', 'opacity-0');
-        }, 10);
-        
-        // 미리보기 UI를 동적으로 생성
+        setTimeout(() => modalContent.classList.remove('scale-95', 'opacity-0'), 10);
         battlePreview.innerHTML = `
             <h2 class="text-3xl font-black text-center mb-4 tracking-wider">상대 정보</h2>
             <div class="grid grid-cols-2 gap-6 items-start">
-                <div>
-                    <h3 class="text-xl font-bold mb-2">${currentUsername}</h3>
-                    <div class="grid grid-cols-3 gap-2 bg-blue-50 p-2 rounded-lg">${renderDeck(currentUserDeck)}</div>
-                </div>
-                <div>
-                    <h3 class="text-xl font-bold mb-2">${opponent.username}</h3>
-                    <div class="grid grid-cols-3 gap-2 bg-red-50 p-2 rounded-lg">${renderDeck(opponent.deck)}</div>
-                </div>
+                <div><h3 class="text-xl font-bold mb-2">${currentUsername}</h3><div class="grid grid-cols-3 gap-2 bg-blue-50 p-2 rounded-lg">${renderDeck(currentUserDeck)}</div></div>
+                <div><h3 class="text-xl font-bold mb-2">${opponent.username}</h3><div class="grid grid-cols-3 gap-2 bg-red-50 p-2 rounded-lg">${renderDeck(opponent.deck)}</div></div>
             </div>
             <button onclick="startBattle(${opponentId})" class="mt-6 w-1/2 mx-auto py-3 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 text-2xl">배틀 시작!</button>
         `;
     }
 
-    // '배틀 시작!' 버튼 클릭 시 서버에 결과를 요청하는 함수
     async function startBattle(opponentId) {
+        battlePreview.classList.add('hidden');
+        battleAnimation.classList.remove('hidden');
+        battleLogCanvas.textContent = '배틀 준비 중...';
+
+        const opponent = opponentsData.find(o => o.id === opponentId);
+        if (!currentUserDeck.length || !opponent.deck.length) {
+            alert('덱에 포켓몬이 없습니다.');
+            return closeBattleModal();
+        }
+
         try {
-            // CSRF 토큰을 가져와 fetch 요청 헤더에 포함
+            const playerImageSources = currentUserDeck.reduce((acc, p, i) => ({ ...acc, [`player${i}`]: p.sprite_url.replace('sprites/pokemon', 'sprites/pokemon/back') }), {});
+            const opponentImageSources = opponent.deck.reduce((acc, p, i) => ({ ...acc, [`opponent${i}`]: p.sprite_url }), {});
+            
+            battleAssets = await preloadImages({ ...playerImageSources, ...opponentImageSources });
+
+            playerTeamState = currentUserDeck.map((p, i) => ({ ...p, maxHp: p.hp * 2, currentHp: p.hp * 2, img: battleAssets[`player${i}`], isFainted: false, alpha: 1, isPlayer: true }));
+            opponentTeamState = opponent.deck.map((p, i) => ({ ...p, maxHp: p.hp * 2, currentHp: p.hp * 2, img: battleAssets[`opponent${i}`], isFainted: false, alpha: 1, isPlayer: false }));
+            
+            gameLoop();
+
             const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
             const response = await fetch(`/battle/start/${opponentId}/`, {
                 method: 'POST',
@@ -122,45 +285,197 @@
             const data = await response.json();
 
             if (data.status === 'success') {
-                const resultTitle = document.getElementById('result-title');
-                if (data.result.is_victory) {
-                    resultTitle.textContent = 'VICTORY';
-                    resultTitle.className = 'text-8xl font-black mb-4 text-blue-500';
-                } else {
-                    resultTitle.textContent = 'DEFEAT';
-                    resultTitle.className = 'text-8xl font-black mb-4 text-red-500';
-                }
+                const clientResult = await runAnimationSequence();
+                cancelAnimationFrame(animationFrameId);
                 
-                document.getElementById('result-summary').textContent = 
-                    `결과: ${data.my_username} [${data.result.my_remaining} 남음] vs ${data.opponent_username} [${data.result.opponent_remaining} 남음]`;
+                const isVictory = clientResult.my_remaining > 0;
 
-                // 미리보기 UI를 숨기고 결과 UI를 표시
-                battlePreview.classList.add('hidden');
+                battleAnimation.classList.add('hidden');
+                document.getElementById('result-title').textContent = isVictory ? 'VICTORY' : 'DEFEAT';
+                document.getElementById('result-title').className = `text-8xl font-black mb-4 ${isVictory ? 'text-blue-500' : 'text-red-500'}`;
+                document.getElementById('result-summary').textContent = `결과: ${currentUsername} [${clientResult.my_remaining} 남음] vs ${opponent.username} [${clientResult.opponent_remaining} 남음]`;
                 battleResult.classList.remove('hidden');
             } else {
-                alert('오류: ' + data.message);
-                closeBattleModal();
+                throw new Error(data.message);
             }
         } catch (error) {
-            console.error('Battle request failed:', error);
-            alert('배틀 결과를 가져오는 데 실패했습니다.');
+            console.error('Battle failed:', error);
+            alert('배틀 중 오류가 발생했습니다: ' + error.message);
             closeBattleModal();
         }
     }
+    
+    async function runAnimationSequence() {
+        let playerIndex = 0;
+        let opponentIndex = 0;
+    
+        await animateSwitchIn(true, playerIndex);
+        await animateSwitchIn(false, opponentIndex);
+        
+        let turn = Math.random() < 0.5 ? 'player' : 'opponent';
 
-    // 모달창 닫기 함수
+        while (playerIndex < playerTeamState.length && opponentIndex < opponentTeamState.length) {
+            const attacker = turn === 'player' ? activePlayerPokemon : activeOpponentPokemon;
+            const defender = turn === 'player' ? activeOpponentPokemon : activePlayerPokemon;
+
+            if (attacker.currentHp > 0) {
+                await animateAttack(attacker, defender);
+            }
+
+            if (defender.currentHp <= 0) {
+                await animateFaint(defender);
+                if (defender.isPlayer) {
+                    playerIndex++;
+                    if (playerIndex < playerTeamState.length) {
+                        await animateSwitchIn(true, playerIndex);
+                    }
+                } else {
+                    opponentIndex++;
+                    if (opponentIndex < opponentTeamState.length) {
+                        await animateSwitchIn(false, opponentIndex);
+                    }
+                }
+            }
+            
+            turn = (turn === 'player') ? 'opponent' : 'player';
+            await sleep(100);
+        }
+
+        battleLogCanvas.textContent = '배틀 종료!';
+        await sleep(500);
+        
+        return {
+            my_remaining: playerTeamState.length - playerIndex,
+            opponent_remaining: opponentTeamState.length - opponentIndex
+        };
+    }
+
+    async function animateAttack(attacker, defender) {
+        if (!attacker || attacker.isFainted || !defender || defender.isFainted) return;
+        battleLogCanvas.textContent = `${attacker.name}의 공격!`;
+        const originalX = attacker.x;
+        const moveAmount = attacker.isPlayer ? -50 : 50;
+        
+        createSkillParticles(attacker, defender);
+        attacker.x += moveAmount; await sleep(100);
+        attacker.x = originalX;
+        
+        const effectiveness = getTypeEffectiveness(attacker.type1, [defender.type1, defender.type2]);
+        const isCritical = Math.random() < 0.15;
+        
+        let damage = ( (attacker.attack / defender.defense) * 35 + 5 ) * effectiveness * (isCritical ? 1.5 : 1);
+        damage = Math.floor(damage * (0.9 + Math.random() * 0.2));
+
+        if (isCritical) setTimeout(() => battleLogCanvas.textContent = '급소에 맞았다!', 100);
+        else if (effectiveness > 1) setTimeout(() => battleLogCanvas.textContent = '효과는 굉장했다!', 100);
+        else if (effectiveness < 1 && effectiveness > 0) setTimeout(() => battleLogCanvas.textContent = '효과가 별로인 듯하다...', 100);
+        
+        await animateDamage(defender, damage);
+    }
+    
+    async function animateDamage(target, amount) {
+        for (let i=0; i<2; i++) { target.alpha = 0.2; await sleep(40); target.alpha = 1; await sleep(40); }
+        await animateHpReduction(target, amount);
+    }
+
+    async function animateHpReduction(target, amount) {
+        const startHp = target.currentHp;
+        const endHp = Math.max(0, startHp - amount);
+        if (startHp === endHp) return;
+        const duration = 200;
+        const startTime = Date.now();
+        while (Date.now() - startTime < duration) {
+            target.currentHp = startHp - (startHp - endHp) * ((Date.now() - startTime) / duration);
+            await sleep(16);
+        }
+        target.currentHp = endHp;
+    }
+
+    async function animateFaint(target) {
+        battleLogCanvas.textContent = `${target.name}은(는) 쓰러졌다!`;
+        target.isFainted = true;
+        const duration = 300;
+        const startTime = Date.now();
+        while (Date.now() - startTime < duration) {
+            const progress = (Date.now() - startTime) / duration;
+            target.alpha = 1 - progress;
+            target.y += 1.5;
+            await sleep(16);
+        }
+        target.alpha = 0;
+        await sleep(200);
+    }
+
+    async function animateSwitchIn(isPlayer, index) {
+        const team = isPlayer ? playerTeamState : opponentTeamState;
+        const pokemonData = team[index];
+        battleLogCanvas.textContent = isPlayer ? `가라! ${pokemonData.name}!` : `상대는 ${pokemonData.name}을(를) 내보냈다!`;
+        
+        const startX = isPlayer ? -100 : CANVAS_WIDTH + 100;
+        const endX = isPlayer ? CANVAS_WIDTH * 0.25 : CANVAS_WIDTH * 0.75;
+        const stateObject = { ...pokemonData, x: startX, y: isPlayer ? CANVAS_HEIGHT * 0.65 : CANVAS_HEIGHT * 0.3, alpha: 1 };
+        if (isPlayer) activePlayerPokemon = stateObject; else activeOpponentPokemon = stateObject;
+        
+        const duration = 250;
+        const startTime = Date.now();
+        while(Date.now() - startTime < duration) {
+            const progress = (Date.now() - startTime) / duration;
+            stateObject.x = startX + (endX - startX) * (1 - Math.pow(1 - progress, 3));
+            await sleep(16);
+        }
+        stateObject.x = endX;
+        await sleep(200);
+    }
+
     function closeBattleModal() {
+        cancelAnimationFrame(animationFrameId);
+        
+        battleAnimation.classList.add('hidden');
+        battleResult.classList.add('hidden');
+        battlePreview.classList.remove('hidden');
+        battlePreview.innerHTML = `<div class="animate-pulse text-center p-8"><p class="text-xl font-semibold text-gray-600">상대방의 정보를 불러오는 중...</p></div>`;
+
         modalContent.classList.add('scale-95', 'opacity-0');
         setTimeout(() => {
             battleModal.classList.add('hidden');
-            // 다음 배틀을 위해 모달 내용을 초기 상태로 복원
-            battlePreview.classList.remove('hidden');
-            battlePreview.innerHTML = `<div class="animate-pulse text-center p-8"><p class="text-xl font-semibold text-gray-600">상대방의 정보를 불러오는 중...</p></div>`;
-            battleResult.classList.add('hidden');
         }, 300);
     }
-</script>
-<!-- CSRF 토큰을 JavaScript에서 사용하기 위한 숨겨진 form -->
+
+    class Particle {
+        constructor(x, y, color) {
+            this.x = x; this.y = y; this.color = color;
+            this.size = Math.random() * 7 + 3;
+            this.life = 1;
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 4 + 2;
+            this.vx = Math.cos(angle) * speed;
+            this.vy = Math.sin(angle) * speed;
+        }
+        update() { this.x += this.vx; this.y += this.vy; this.life -= 0.04; }
+        draw() {
+            ctx.save();
+            ctx.globalAlpha = this.life;
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    const typeColors = {
+        'fire': '#F08030', 'water': '#6890F0', 'grass': '#78C850', 'electric': '#F8D030',
+        'normal': '#A8A878', 'fighting': '#C03028', 'flying': '#A890F0', 'poison': '#A040A0',
+        'ground': '#E0C068', 'rock': '#B8A038', 'bug': '#A8B820', 'ghost': '#705898',
+        'steel': '#B8B8D0', 'psychic': '#F85888', 'ice': '#98D8D8', 'dragon': '#7038F8', 'dark': '#705848', 'fairy': '#EE99AC'
+    };
+
+    function createSkillParticles(attacker, defender) {
+        const color = typeColors[attacker.type1] || '#FFFFFF';
+        for (let i = 0; i < 30; i++) {
+            particles.push(new Particle(defender.x, defender.y, color));
+        }
+    }
+</script>                                       
 <form class="hidden"><input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}"></form>
 {% endblock %}
-

@@ -1,8 +1,6 @@
+## pokemons/models.py
 from django.db import models
-
-# Create your models here.
 from django.conf import settings
-from django.db import models
 
 class Pokemon(models.Model):
     pokemon_id = models.IntegerField(unique=True)
@@ -12,13 +10,23 @@ class Pokemon(models.Model):
     hp = models.IntegerField()
     attack = models.IntegerField()
     defense = models.IntegerField()
+    type1 = models.CharField(max_length=20, blank=True)
+    type2 = models.CharField(max_length=20, blank=True)
 
     def __str__(self):
         return self.name
 
 class Deck(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    pokemons = models.ManyToManyField(Pokemon, blank=True)
+    pokemons = models.ManyToManyField(Pokemon, through='DeckPokemon', blank=True)
 
     def __str__(self):
         return f"{self.user.username}'s Deck"
+
+class DeckPokemon(models.Model):
+    deck = models.ForeignKey(Deck, on_delete=models.CASCADE)
+    pokemon = models.ForeignKey(Pokemon, on_delete=models.CASCADE)
+    order = models.PositiveIntegerField()
+
+    class Meta:
+        ordering = ['order']
