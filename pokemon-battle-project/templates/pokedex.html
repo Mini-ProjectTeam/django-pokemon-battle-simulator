@@ -5,11 +5,16 @@
 
 {% block content %}
 <div class="card">
-    <div class="flex justify-center items-center mb-6 relative">
-        <h2 class="text-3xl font-black text-center">1세대 포켓몬 도감</h2>
-        <button id="random-select-btn" class="absolute right-0 py-2 px-4 bg-yellow-400 text-yellow-900 font-bold rounded-full shadow-md hover:bg-yellow-500 transition transform hover:scale-105">
-            <i class="fa-solid fa-dice mr-2"></i>랜덤 선택
-        </button>
+    <div class="flex justify-between items-center mb-6">
+        <h2 class="text-3xl font-black">1세대 포켓몬 도감</h2>
+        <div class="flex space-x-2">
+            <button id="clear-selection-btn" class="py-2 px-4 bg-gray-500 text-white font-bold rounded-full shadow-md hover:bg-gray-600 transition transform hover:scale-105">
+                <i class="fa-solid fa-times mr-2"></i>선택 비우기
+            </button>
+            <button id="random-select-btn" class="py-2 px-4 bg-yellow-400 text-yellow-900 font-bold rounded-full shadow-md hover:bg-yellow-500 transition transform hover:scale-105">
+                <i class="fa-solid fa-dice mr-2"></i>랜덤 선택
+            </button>
+        </div>
     </div>
     <p class="text-center text-gray-500 mb-6">포켓몬을 클릭하여 덱에 추가하거나 제거하세요. 선택한 순서대로 덱이 저장됩니다. (최대 6마리)</p>
     
@@ -48,6 +53,7 @@
     const saveDeckBtn = document.getElementById('save-deck-btn');
     const deckCountSpan = document.getElementById('deck-count');
     const randomSelectBtn = document.getElementById('random-select-btn');
+    const clearSelectionBtn = document.getElementById('clear-selection-btn');
     
     let selectedPokemonIds = JSON.parse('{{ user_deck_ids|escapejs }}');
     
@@ -99,6 +105,11 @@
             const pokemonId = parseInt(card.dataset.pokemonId);
             selectedPokemonIds.push(pokemonId);
         });
+        updateSelectionUI();
+    });
+
+    clearSelectionBtn.addEventListener('click', () => {
+        selectedPokemonIds = [];
         updateSelectionUI();
     });
 
